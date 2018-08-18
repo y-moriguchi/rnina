@@ -31,11 +31,13 @@ function createQuadro(init) {
 		xPos = 0,
 		yPos = 0,
 		direction = UP,
-		property = {};
+		property = {},
+		result;
 	function initX(y) {
 		var j;
 		quadro[y] = [];
-		quadro[y][0] = quadro[y][maxX + 1] = { ch: " " };
+		quadro[y][0] = { ch: " " };
+		quadro[y][maxX + 1] = { ch: " " };
 		for(j = 0; j < maxX; j++) {
 			quadro[y][j + 1] = { ch: " " };
 		}
@@ -60,6 +62,9 @@ function createQuadro(init) {
 			} else {
 				return "";
 			}
+		},
+		isSpace: function() {
+			return me.read() === "" || me.read() === " ";
 		},
 		moveUp: function() {
 			yPos = yPos < 1 ? yPos : yPos - 1;
@@ -228,7 +233,7 @@ function parse(input) {
 			quadro.moveForward();
 			if(quadro.getAttr("stateNo")) {
 				return REJECT;
-			} else if(quadro.read() === " ") {
+			} else if(quadro.isSpace()) {
 				quadro.moveBackward();
 				quadro.turnRight();
 				return transit(states.markState);
@@ -243,7 +248,7 @@ function parse(input) {
 				return REJECT;
 			} else if(quadro.read() === getStateBranch(quadro.getDirection())) {
 				return fork(states.inState, states.edgeLeft);
-			} else if(quadro.read() === " ") {
+			} else if(quadro.isSpace()) {
 				quadro.moveBackward();
 				quadro.turnRight();
 				return transit(states.inState);
@@ -266,7 +271,7 @@ function parse(input) {
 			var stateTo;
 			quadro.setAttr("traversed", true);
 			quadro.moveForward();
-			if(quadro.read() === " ") {
+			if(quadro.isSpace()) {
 				return REJECT;
 			} else if(quadro.read() === "+") {
 				return fork(states.edge, states.edgeLeft, states.edgeRight);
@@ -292,7 +297,10 @@ function parse(input) {
 			}
 		}
 	};
-	engine(quadro, states.init);
+	result = engine(quadro, states.init);
+	if(result) {
+		throw new Error(result);
+	}
 	return automaton;
 }
 

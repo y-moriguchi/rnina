@@ -1,0 +1,3 @@
+RNina Ver. @version@
+usage:
+    rnina filename[.extension].rnina
