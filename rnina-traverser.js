@@ -37,119 +37,83 @@ function deepCopy(obj) {
 	return res;
 }
 
-function linkState(automaton, stateFrom, stateTo, stateRemove) {
-	var edgeFT = nvp(automaton[stateFrom].edges[stateTo]),
-		edgeFR = nvp(automaton[stateFrom].edges[stateRemove]),
-		edgeRR = nvp(automaton[stateRemove].edges[stateRemove]),
-		edgeRT = nvp(automaton[stateRemove].edges[stateTo]);
-	automaton[stateFrom].edges[stateTo] = {
-		type: "alter",
-		left: edgeFT,
-		right: {
-			type: "concat",
-			left: edgeFR,
-			right: {
-				type: "concat",
-				left: {
-					type: "star",
-					body: edgeRR
-				},
-				right: edgeRT
+function executeReduce(ast) {
+	return reduceAst(ast);
+}
+
+function computeRegex(automaton) {
+	var i,
+		r,
+		rb = null,
+		j,
+		result = {};
+	function getEdge(r, i, j) {
+		if(r) {
+			return result[r][i][j];
+		} else if(!automaton[i].edges[j]) {
+			return i === j ? EPS : PHI;
+		} else if(i === j) {
+			return {
+				type: "alter",
+				left: EPS,
+				right: automaton[i].edges[j]
+			};
+		} else {
+			return automaton[i].edges[j];
+		}
+	}
+	for(r in automaton) {
+		if(automaton.hasOwnProperty(r)) {
+			result[r] = {};
+			for(i in automaton) {
+				if(automaton.hasOwnProperty(i)) {
+					result[r][i] = {};
+					for(j in automaton) {
+						if(automaton.hasOwnProperty(j)) {
+							result[r][i][j] = executeReduce({
+								type: "alter",
+								left: getEdge(rb, i, j),
+								right: {
+									type: "concat",
+									left: getEdge(rb, i, r),
+									right: {
+										type: "concat",
+										left: {
+											type: "star",
+											body: getEdge(rb, r, r)
+										},
+										right: getEdge(rb, r, j)
+									}
+								}
+							});
+						}
+					}
+				}
 			}
+			rb = r;
 		}
 	};
-}
-
-function removeState(automaton, stateRemove) {
-	var i,
-		j,
-		statesFrom = automaton[stateRemove].prev,
-		edges = automaton[stateRemove].edges;
-	for(i = 0; i < statesFrom.length; i++) {
-		for(j in edges) {
-			if(edges.hasOwnProperty(j)) {
-				linkState(automaton, statesFrom[i], j, stateRemove);
-			}
-		}
-	}
-	delete automaton[stateRemove];
-}
-
-function removeAllStatesExcept(automaton, pred) {
-	var i;
-	for(i in automaton) {
-		if(automaton.hasOwnProperty(i) && pred(automaton[i], i)) {
-			removeState(automaton, i);
-		}
-	}
-}
-
-function removeNotAcceptStates(automaton, init) {
-	removeAllStatesExcept(automaton, function(state, no) {
-		return no !== init && !state.accept;
-	});
-}
-
-function removeAllStatesExceptNo(automaton, init, accept) {
-	removeAllStatesExcept(automaton, function(state, no) {
-		return no !== init && no !== accept;
-	});
+	return result[rb];
 }
 
 function generateRegexAST(automaton, init) {
 	var i,
-		reduceNotAccept = deepCopy(automaton),
-		copyReduced,
-		result;
+		computed,
+		result = null;
 	function alter(x) {
 		result = !result ? x : {
-			type: alter,
+			type: "alter",
 			left: result,
 			right: x
 		};
 	};
-	removeNotAcceptStates(reduceNotAccept, init);
+	computed = computeRegex(automaton);
 	for(i in automaton) {
 		if(automaton.hasOwnProperty(i) && automaton[i].accept) {
-			copyReduced = deepCopy(reduceNotAccept);
-			removeAllStatesExceptNo(copyReduced, init, i);
-			if(init === i) {
-				alter({
-					type: "star",
-					body: nvp(copyReduced[i].edges[i])
-				});
-			} else {
-				alter({
-					type: "concat",
-					left: {
-						type: "star",
-						body: {
-							type: "alter",
-							left: nvp(copyReduced[init].edges[init]),
-							right: {
-								type: "concat",
-								left: nvp(copyReduced[init].edges[i]),
-								right: {
-									type: "concat",
-									left: nvp(copyReduced[i].edges[i]),
-									right: nvp(copyReduced[i].edges[init])
-								}
-							}
-						}
-					},
-					right: {
-						type: "concat",
-						left: nvp(copyReduced[init].edges[i]),
-						right: {
-							type: "star",
-							body: nvp(copyReduced[i].edges[i])
-						}
-					}
-				});
-			}
+			alter(computed[init][i])
 		}
 	}
-	return result;
+	return executeReduce(result);
 }
 
 var reduceRules = [
@@ -160,6 +124,29 @@ var reduceRules = [
 		},
 		action: function(element) {
 			return EPS;
+		}
+	},
+	{
+		pattern: {
+			"type": A.eqv("star"),
+			"body": A.eqv(EPS)
+		},
+		action: function(element) {
+			return EPS;
+		}
+	},
+	{
+		pattern: {
+			"type": A.eqv("star"),
+			"body": {
+				"type": A.eqv("option")
+			}
+		},
+		action: function(element) {
+			return {
+				"type": "star",
+				"body": element.body.body
+			};
 		}
 	},
 	{
@@ -215,6 +202,44 @@ var reduceRules = [
 		action: function(element) {
 			return element.left;
 		}
+	},
+	{
+		pattern: {
+			"type": A.eqv("alter"),
+			"left": A.memory("mem"),
+			"right": A.refer("mem")
+		},
+		action: function(element) {
+			return element.left;
+		}
+	},
+	{
+		pattern: {
+			"type": A.eqv("alter"),
+			"left": A.eqv(EPS)
+		},
+		action: function(element) {
+			return {
+				"type": "option",
+				"body": element.right
+			};
+		}
+	},
+	{
+		pattern: {
+			"type": A.eqv("concat"),
+			"left": {
+				"type": A.eqv("star"),
+				"body": A.memory("mem2")
+			},
+			"right": {
+				"type": A.eqv("option"),
+				"body": A.refer("mem2")
+			}
+		},
+		action: function(element) {
+			return element.left;
+		}
 	}
 ];
 
@@ -250,7 +275,9 @@ function serializeRegex(regexAst) {
 		}
 		return walk(element) ? "(?:" + serializeRegex(element) + ")" : serializeRegex(element);
 	}
-	if(regexAst === "phi") {
+	if(regexAst === PHI) {
+		return PHI;
+	} else if(regexAst === EPS) {
 		return "";
 	} else if(typeof regexAst === "string") {
 		return regexAst;
@@ -260,7 +287,7 @@ function serializeRegex(regexAst) {
 		if(regexAst.left !== PHI && regexAst.right !== PHI) {
 			return parenConcat(regexAst.left) + parenConcat(regexAst.right);
 		} else {
-			return "";
+			return PHI;
 		}
 	case "alter":
 		if(regexAst.left === PHI) {
@@ -272,6 +299,8 @@ function serializeRegex(regexAst) {
 		}
 	case "star":
 		return regexAst.body === PHI ? "" : parenStar(regexAst.body) + "*";
+	case "option":
+		return regexAst.body === PHI ? "" : parenStar(regexAst.body) + "?";
 	}
 }
 
